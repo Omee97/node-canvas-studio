@@ -1,24 +1,23 @@
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useRef, useState } from 'react';
 import {
   ReactFlow,
   Background,
   Controls,
   MiniMap,
-  addEdge,
-  useNodesState,
-  useEdgesState,
-  Connection,
   BackgroundVariant,
-  Node,
+  ReactFlowInstance,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
+import { useShallow } from 'zustand/react/shallow';
 
 import InputNode from './InputNode';
 import OutputNode from './OutputNode';
 import LLMNode from './LLMNode';
 import TextNode from './TextNode';
 import { NodePalette } from './NodePalette';
-import { CustomNode, CustomEdge } from '@/types/flow';
+import { SubmitButton } from './SubmitButton';
+import { useFlowStore } from '@/store/flowStore';
+import { CustomNode, NodeType, InputNodeData, OutputNodeData, LLMNodeData, TextNodeData } from '@/types/flow';
 
 const nodeTypes = {
   input: InputNode,
@@ -27,87 +26,109 @@ const nodeTypes = {
   text: TextNode,
 };
 
-const initialNodes: CustomNode[] = [
-  {
-    id: '1',
-    type: 'input',
-    position: { x: 100, y: 150 },
-    data: { label: 'User Input', value: '' },
-  },
-  {
-    id: '2',
-    type: 'llm',
-    position: { x: 400, y: 100 },
-    data: { label: 'AI Processor', model: 'gpt-4', temperature: 0.7, systemPrompt: '' },
-  },
-  {
-    id: '3',
-    type: 'output',
-    position: { x: 750, y: 150 },
-    data: { label: 'Response', format: 'text' },
-  },
-];
-
-const initialEdges: CustomEdge[] = [
-  { id: 'e1-2', source: '1', target: '2', animated: true },
-  { id: 'e2-3', source: '2', target: '3', animated: true },
-];
 
 export const FlowCanvas: React.FC = () => {
-  const [nodes, setNodes, onNodesChange] = useNodesState(initialNodes);
-  const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges);
-  const [nodeId, setNodeId] = useState(4);
+  const reactFlowWrapper = useRef<HTMLDivElement>(null);
+  const [reactFlowInstance, setReactFlowInstance] = useState<ReactFlowInstance | null>(null);
 
-  const onConnect = useCallback(
-    (connection: Connection) => {
-      setEdges((eds) => addEdge({ ...connection, animated: true }, eds));
-    },
-    [setEdges]
+  const { nodes, edges, getNodeID, addNode, onNodesChange, onEdgesChange, onConnect } = useFlowStore(
+    useShallow((state) => ({
+      nodes: state.nodes,
+      edges: state.edges,
+      getNodeID: state.getNodeID,
+      addNode: state.addNode,
+      onNodesChange: state.onNodesChange,
+      onEdgesChange: state.onEdgesChange,
+      onConnect: state.onConnect,
+    }))
   );
 
-  const addNode = useCallback(
-    (type: 'input' | 'output' | 'llm' | 'text') => {
-      const labels: Record<string, string> = {
-        input: 'Input',
-        output: 'Output',
-        llm: 'LLM',
-        text: 'Text',
-      };
+  const getInitNodeData = (nodeID: string, type: NodeType): CustomNode['data'] => {
+    const labels: Record<NodeType, string> = {
+      input: 'Input',
+      output: 'Output',
+      llm: 'LLM',
+      text: 'Text',
+    };
 
-      const defaultData: Record<string, Record<string, unknown>> = {
-        input: { label: `${labels[type]} ${nodeId}`, value: '' },
-        output: { label: `${labels[type]} ${nodeId}`, format: 'text' },
-        llm: { label: `${labels[type]} ${nodeId}`, model: 'gpt-4', temperature: 0.7, systemPrompt: '' },
-        text: { label: `${labels[type]} ${nodeId}`, content: '' },
-      };
+    switch (type) {
+      case 'input':
+        return { label: `${labels[type]} ${nodeID.split('-')[1]}`, value: '' } as InputNodeData;
+      case 'output':
+        return { label: `${labels[type]} ${nodeID.split('-')[1]}`, format: 'text' } as OutputNodeData;
+      case 'llm':
+        return { label: `${labels[type]} ${nodeID.split('-')[1]}`, model: 'gpt-4', temperature: 0.7, systemPrompt: '' } as LLMNodeData;
+      case 'text':
+        return { label: `${labels[type]} ${nodeID.split('-')[1]}`, content: '' } as TextNodeData;
+      default:
+        return { label: nodeID } as InputNodeData;
+    }
+  };
 
+  const createNode = useCallback(
+    (type: NodeType, position?: { x: number; y: number }) => {
+      const nodeID = getNodeID(type);
       const newNode: CustomNode = {
-        id: String(nodeId),
+        id: nodeID,
         type,
-        position: {
+        position: position || {
           x: 300 + Math.random() * 100,
           y: 200 + Math.random() * 100,
         },
-        data: defaultData[type] as CustomNode['data'],
+        data: getInitNodeData(nodeID, type),
       };
-
-      setNodes((nds) => [...nds, newNode]);
-      setNodeId((id) => id + 1);
+      addNode(newNode);
     },
-    [nodeId, setNodes]
+    [getNodeID, addNode]
   );
+
+  const onDrop = useCallback(
+    (event: React.DragEvent) => {
+      event.preventDefault();
+
+      if (!reactFlowWrapper.current || !reactFlowInstance) return;
+
+      const reactFlowBounds = reactFlowWrapper.current.getBoundingClientRect();
+
+      const data = event.dataTransfer.getData('application/reactflow');
+      if (!data) return;
+
+      try {
+        const { nodeType } = JSON.parse(data) as { nodeType: NodeType };
+        if (!nodeType) return;
+
+        const position = reactFlowInstance.screenToFlowPosition({
+          x: event.clientX - reactFlowBounds.left,
+          y: event.clientY - reactFlowBounds.top,
+        });
+
+        createNode(nodeType, position);
+      } catch (e) {
+        console.error('Failed to parse drag data:', e);
+      }
+    },
+    [reactFlowInstance, createNode]
+  );
+
+  const onDragOver = useCallback((event: React.DragEvent) => {
+    event.preventDefault();
+    event.dataTransfer.dropEffect = 'move';
+  }, []);
 
   return (
     <div className="flex h-screen w-full bg-canvas">
-      <NodePalette onAddNode={addNode} />
-      
-      <div className="flex-1 relative">
+      <NodePalette onAddNode={createNode} />
+
+      <div ref={reactFlowWrapper} className="flex-1 relative">
         <ReactFlow
           nodes={nodes}
           edges={edges}
           onNodesChange={onNodesChange}
           onEdgesChange={onEdgesChange}
           onConnect={onConnect}
+          onInit={setReactFlowInstance}
+          onDrop={onDrop}
+          onDragOver={onDragOver}
           nodeTypes={nodeTypes}
           fitView
           className="bg-canvas"
@@ -127,10 +148,18 @@ export const FlowCanvas: React.FC = () => {
           />
         </ReactFlow>
 
-        {/* Canvas title */}
-        <div className="absolute top-4 left-4 bg-card/80 backdrop-blur-sm px-4 py-2 rounded-lg border border-border shadow-sm">
-          <h1 className="font-semibold text-foreground">Flow Editor</h1>
-          <p className="text-xs text-muted-foreground">{nodes.length} nodes • {edges.length} connections</p>
+        {/* Header with title and submit button */}
+        <div className="absolute top-4 left-4 right-4 flex items-start justify-between pointer-events-none">
+          <div className="bg-card/80 backdrop-blur-sm px-4 py-2 rounded-lg border border-border shadow-sm pointer-events-auto">
+            <h1 className="font-semibold text-foreground">Flow Editor</h1>
+            <p className="text-xs text-muted-foreground">
+              {nodes.length} nodes • {edges.length} connections
+            </p>
+          </div>
+
+          <div className="pointer-events-auto">
+            <SubmitButton />
+          </div>
         </div>
       </div>
     </div>
