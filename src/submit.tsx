@@ -1,7 +1,7 @@
 import React from 'react';
-import { Play, CheckCircle, AlertCircle } from 'lucide-react';
+import { Play } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { useFlowStore } from '@/store/flowStore';
+import { useStore } from './store';
 import { useToast } from '@/hooks/use-toast';
 
 // Simple DAG detection using DFS
@@ -44,8 +44,8 @@ function isDAG(nodes: { id: string }[], edges: { source: string; target: string 
 }
 
 export const SubmitButton: React.FC = () => {
-  const nodes = useFlowStore((state) => state.nodes);
-  const edges = useFlowStore((state) => state.edges);
+  const nodes = useStore((state) => state.nodes);
+  const edges = useStore((state) => state.edges);
   const { toast } = useToast();
 
   const handleSubmit = () => {
@@ -74,12 +74,14 @@ export const SubmitButton: React.FC = () => {
   };
 
   return (
-    <Button
-      onClick={handleSubmit}
-      className="gap-2 bg-primary hover:bg-primary/90 text-primary-foreground shadow-md"
-    >
-      <Play className="w-4 h-4" />
-      Submit Pipeline
-    </Button>
+    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+      <Button
+        onClick={handleSubmit}
+        className="gap-2 bg-primary hover:bg-primary/90 text-primary-foreground shadow-md"
+      >
+        <Play className="w-4 h-4" />
+        Submit
+      </Button>
+    </div>
   );
 };
